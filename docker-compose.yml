@@ -1,0 +1,34 @@
+services:
+
+  postgres:
+    image: postgres:17
+
+    environment:
+      POSTGRES_DB: fraud_ml
+      POSTGRES_USER: fraud
+      POSTGRES_PASSWORD: fraud
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - fraud_postgres_data:/var/lib/postgresql/data
+
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+
+  api:
+    build: .
+
+    depends_on:
+      - postgres
+
+    environment:
+      DATABASE_URL: postgresql+psycopg://fraud:fraud@postgres:5432/fraud_ml
+
+    ports:
+      - "8000:8000"
+
+
+volumes:
+  fraud_postgres_data:

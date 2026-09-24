@@ -2,40 +2,42 @@
 
 Учебный end-to-end проект по выявлению мошеннических операций по банковским картам на сильно несбалансированных данных.
 
-Проект включает исследование данных, подготовку признаков, сравнение нескольких моделей классификации, подбор порога решения с учетом условной стоимости ошибок, объяснение модели через SHAP и отслеживание эксперимента через MLflow.
+Проект охватывает полный путь: анализ данных → обучение и сравнение моделей → подбор порога → объяснение модели → сохранение и отслеживание экспериментов → API → PostgreSQL → Docker → базовый мониторинг drift.
+
 Данные - https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
 
 ## Что реализовано
 
-- Проверка пропусков и дубликатов.
-- Удаление 1 081 полностью дублирующейся строки.
-- Анализ дисбаланса классов: после очистки осталось 283 726 операций, из них 473 мошеннические.
-- Разделение данных на train / validation / test с сохранением доли мошенничества.
-- Дополнительная проверка временного разбиения данных.
-- Создание признаков `LogAmount` и `TimeHours`.
+- EDA: пропуски, дубликаты, распределение классов и суммы операций.
+- Удаление полностью дублирующихся строк.
+- Разделение данных на train / validation / test с `stratify`.
+- Feature engineering: `LogAmount`, `TimeHours`.
 - Обучение и сравнение:
   - Logistic Regression
   - Random Forest
   - XGBoost
   - LightGBM
   - CatBoost
-- Оценка по Precision, Recall, F1, ROC-AUC, Average Precision и PR-AUC.
-- Подбор индивидуального classification threshold для каждой модели.
+- Метрики: Precision, Recall, F1, ROC-AUC, Average Precision, PR-AUC.
+- Подбор отдельного classification threshold для каждой модели.
 - Hyperparameter tuning XGBoost через `RandomizedSearchCV`.
 - Выбор итоговой модели только по validation data.
 - Финальная проверка на отдельной test выборке.
-- Объяснение модели с помощью SHAP.
-- Сохранение модели и ее настроек через `joblib`.
-- Логирование итогового эксперимента в MLflow.
-- Экспорт оцененных транзакций в PostgreSQL.
+- SHAP для объяснения влияния признаков.
+- MLflow для хранения параметров и метрик эксперимента.
+- Сохранение модели и настроек через `joblib`.
+- PostgreSQL для хранения результатов и SQL-анализа.
+- FastAPI для получения предсказаний через HTTP API.
+- Docker / Docker Compose для локального запуска API и PostgreSQL.
+- Базовый PSI-based data drift monitoring.
 
 ## Итоговая модель
 
-Итоговой моделью выбран **XGBoost** с порогом классификации **0.324**.
+Итоговой моделью выбран **XGBoost** с порогом **0.324**.
 
-На test выборке получены:
+Результаты на test выборке:
 
-| Метрика | Результат |
+| Метрика | Значение |
 |---|---:|
 | Precision | 0.7549 |
 | Recall | 0.8105 |
@@ -52,67 +54,167 @@
 - False Negative: 100 000 KZT
 - False Positive: 2 000 KZT
 
-При этих предположениях итоговая стоимость ошибок на test выборке составила **1 850 000 KZT**.
+Итоговая условная стоимость ошибок на test выборке: **1 850 000 KZT**.
 
-> Эти значения являются учебными допущениями и не представляют реальные банковские затраты.
+> Стоимости ошибок являются учебными допущениями и не представляют реальные банковские затраты.
 
 Hyperparameter tuning не улучшил бизнес-ориентированный результат: настроенный XGBoost сохранил тот же Recall на validation выборке, но дал больше False Positive. Поэтому итоговой моделью оставлена исходная конфигурация XGBoost.
 
-## Использованные технологии
+## PostgreSQL и SQL-анализ
 
-- Python
-- pandas, NumPy
-- matplotlib
-- scikit-learn
-- XGBoost
-- LightGBM
-- CatBoost
-- SHAP
-- MLflow
-- joblib
-- SQLAlchemy
-- PostgreSQL
-- Jupyter Notebook
+Результаты модели выгружаются в PostgreSQL. Для test-выборки сохраняются исходные признаки, фактический класс, fraud score и итоговое предсказание.
 
-## Структура анализа
-
-`01_eda.ipynb` содержит базовый EDA, очистку данных, первое сравнение моделей, подбор порога, сохранение артефакта и пример экспорта результатов в PostgreSQL.
-
-`02_modeling.ipynb` содержит расширенное моделирование: feature engineering, пять алгоритмов, единое сравнение метрик, оптимизацию порога, настройку XGBoost, финальный выбор модели, test evaluation, SHAP и MLflow.
-
-## Запуск
-
-Датасет ожидается по пути:
+Пример таблицы:
 
 ```text
-data/raw/creditcard.csv
+fraud_scored_transactions
 ```
 
-Установите зависимости и запускайте notebooks из папки `notebooks`.
+Примеры SQL-запросов:
 
-Пример:
+```sql
+-- Общая доля мошеннических операций
+SELECT
+    COUNT(*) AS total_transactions,
+    SUM(actual_class) AS fraud_transactions,
+    ROUND(100.0 * SUM(actual_class) / COUNT(*), 4) AS fraud_rate_percent
+FROM fraud_scored_transactions;
+```
+
+```sql
+-- Количество операций по предсказанному классу
+SELECT
+    predicted_fraud,
+    COUNT(*) AS transactions,
+    ROUND(AVG("Amount")::numeric, 2) AS avg_amount
+FROM fraud_scored_transactions
+GROUP BY predicted_fraud
+ORDER BY predicted_fraud;
+```
+
+```sql
+-- Операции с наибольшим fraud score
+SELECT
+    "Amount",
+    actual_class,
+    predicted_fraud,
+    fraud_probability
+FROM fraud_scored_transactions
+ORDER BY fraud_probability DESC
+LIMIT 20;
+```
+
+SQL используется не для обучения модели, а для анализа результатов и проверки поведения модели на сохраненных данных.
+
+## FastAPI
+
+Обученная модель сохранена как `fraud_model.joblib` и загружается приложением FastAPI.
+
+Основные endpoints:
+
+```text
+GET  /health
+POST /predict
+```
+
+`/health` проверяет, что сервис работает.
+
+`/predict` принимает признаки одной транзакции, выполняет тот же feature engineering, который использовался при обучении, рассчитывает fraud score и сравнивает его с сохраненным threshold.
+
+Пример ответа:
+
+```json
+{
+  "fraud_score": 0.81,
+  "threshold": 0.324,
+  "predicted_fraud": 1,
+  "model": "XGBoost",
+  "model_version": "1.0.0"
+}
+```
+
+Предсказания API могут сохраняться в PostgreSQL для последующего анализа и мониторинга.
+
+Swagger-документация FastAPI доступна локально по адресу:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## MLflow
+
+MLflow используется для отслеживания экспериментов.
+
+Для итогового run `xgboost_champion` сохраняются:
+
+- модель;
+- threshold;
+- Precision / Recall / F1;
+- Average Precision / PR-AUC;
+- False Positive / False Negative;
+- условная business cost.
+
+Локальное хранилище метаданных MLflow использует SQLite (`mlflow.db`).
+
+## Docker
+
+FastAPI и PostgreSQL можно запускать как отдельные контейнеры через Docker Compose:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-jupyter notebook
+docker compose up --build
 ```
 
-Для PostgreSQL строка подключения читается из `.env` через переменную:
+Это упрощает повторяемый локальный запуск приложения и базы данных.
+
+## Drift monitoring
+
+Для базового мониторинга сравнивается распределение production-признаков с reference sample из обучающих данных.
+
+Используется PSI (Population Stability Index). Это простой индикатор изменения распределения данных, а не полноценная production-система мониторинга.
+
+## Основные технологии
+
+- Python
+- pandas, NumPy, matplotlib
+- scikit-learn
+- XGBoost, LightGBM, CatBoost
+- SHAP
+- MLflow
+- FastAPI
+- PostgreSQL
+- SQLAlchemy, psycopg
+- joblib
+- Docker / Docker Compose
+- Jupyter Notebook
+
+## Основные файлы
 
 ```text
-DATABASE_URL=...
-```
+notebooks/
+├── 01_eda.ipynb
+└── 02_modeling.ipynb
 
-Секреты и локальные файлы MLflow не следует загружать в GitHub.
+src/
+├── features.py
+├── api.py
+├── db.py
+└── monitor_drift.py
+
+sql/
+├── schema.sql
+└── analysis.sql
+
+artifacts/
+├── fraud_model.joblib
+└── reference_sample.csv
+```
 
 ## Ограничения
 
-- Доля мошеннических операций очень мала.
-- Признаки `V1–V28` анонимизированы, поэтому их бизнес-смысл неизвестен.
-- Данные покрывают ограниченный временной период.
-- Стоимость False Positive и False Negative задана условно.
-- Результаты относятся только к данному набору данных и не означают готовность модели к использованию в реальном банке.
+- Данные покрывают короткий временной период.
+- `V1–V28` анонимизированы, поэтому их бизнес-смысл неизвестен.
+- Fraud-класс крайне редкий.
+- Стоимости False Positive и False Negative заданы условно.
+- Проект не является готовой банковской anti-fraud системой: нет реальных online labels, автоматического retraining, полноценного мониторинга, authentication/authorization и production deployment.
 
 
