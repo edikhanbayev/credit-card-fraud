@@ -10,3 +10,4 @@ mlflow.db
 mlruns/
 notebooks/01_eda_old.ipynb
 catboost_info/
+.idea/
