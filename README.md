@@ -1,43 +1,49 @@
 # Credit Card Fraud Detection
 
-Учебный end-to-end проект по выявлению мошеннических операций по банковским картам на сильно несбалансированных данных.
+An end-to-end educational project for detecting fraudulent credit card transactions in a highly imbalanced dataset.
 
-Проект охватывает полный путь: анализ данных → обучение и сравнение моделей → подбор порога → объяснение модели → сохранение и отслеживание экспериментов → API → PostgreSQL → Docker → базовый мониторинг drift.
+The project covers the full workflow: data analysis → model training and comparison → threshold selection → model explainability → experiment tracking and artifact persistence → API → PostgreSQL → Docker → basic drift monitoring.
 
-Данные - https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+Dataset: https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
 
-## Что реализовано
+## What Was Implemented
 
-- EDA: пропуски, дубликаты, распределение классов и суммы операций.
-- Удаление полностью дублирующихся строк.
-- Разделение данных на train / validation / test с `stratify`.
+- EDA: missing values, duplicates, class distribution, and transaction amount analysis.
+- Removal of fully duplicated rows.
+- Train / validation / test split using `stratify`.
 - Feature engineering: `LogAmount`, `TimeHours`.
-- Обучение и сравнение:
+- Model training and comparison:
   - Logistic Regression
   - Random Forest
   - XGBoost
   - LightGBM
   - CatBoost
-- Метрики: Precision, Recall, F1, ROC-AUC, Average Precision, PR-AUC.
-- Подбор отдельного classification threshold для каждой модели.
-- Hyperparameter tuning XGBoost через `RandomizedSearchCV`.
-- Выбор итоговой модели только по validation data.
-- Финальная проверка на отдельной test выборке.
-- SHAP для объяснения влияния признаков.
-- MLflow для хранения параметров и метрик эксперимента.
-- Сохранение модели и настроек через `joblib`.
-- PostgreSQL для хранения результатов и SQL-анализа.
-- FastAPI для получения предсказаний через HTTP API.
-- Docker / Docker Compose для локального запуска API и PostgreSQL.
-- Базовый PSI-based data drift monitoring.
+- Evaluation metrics:
+  - Precision
+  - Recall
+  - F1
+  - ROC-AUC
+  - Average Precision
+  - PR-AUC
+- Separate classification threshold selection for each model.
+- XGBoost hyperparameter tuning using `RandomizedSearchCV`.
+- Final model selection based only on validation data.
+- Final evaluation on a separate test set.
+- SHAP for feature impact explainability.
+- MLflow for tracking experiment parameters and metrics.
+- Model and configuration persistence using `joblib`.
+- PostgreSQL for storing model results and SQL-based analysis.
+- FastAPI for serving predictions through an HTTP API.
+- Docker / Docker Compose for local deployment of the API and PostgreSQL.
+- Basic PSI-based data drift monitoring.
 
-## Итоговая модель
+## Final Model
 
-Итоговой моделью выбран **XGBoost** с порогом **0.324**.
+The final selected model is **XGBoost** with a classification threshold of **0.324**.
 
-Результаты на test выборке:
+Test set results:
 
-| Метрика | Значение |
+| Metric | Value |
 |---|---:|
 | Precision | 0.7549 |
 | Recall | 0.8105 |
@@ -45,35 +51,42 @@
 | ROC-AUC | 0.9695 |
 | Average Precision | 0.8286 |
 | PR-AUC | 0.8285 |
-| False Positive | 25 |
-| False Negative | 18 |
-| True Positive | 77 |
+| False Positives | 25 |
+| False Negatives | 18 |
+| True Positives | 77 |
 
-Для демонстрации бизнес-логики использованы условные стоимости ошибок:
+For demonstration of business-oriented evaluation, the following hypothetical error costs were used:
 
-- False Negative: 100 000 KZT
-- False Positive: 2 000 KZT
+- False Negative: 100,000 KZT
+- False Positive: 2,000 KZT
 
-Итоговая условная стоимость ошибок на test выборке: **1 850 000 KZT**.
+The resulting hypothetical total error cost on the test set was **1,850,000 KZT**.
 
-> Стоимости ошибок являются учебными допущениями и не представляют реальные банковские затраты.
+> The error costs are educational assumptions and do not represent actual banking costs.
 
-Hyperparameter tuning не улучшил бизнес-ориентированный результат: настроенный XGBoost сохранил тот же Recall на validation выборке, но дал больше False Positive. Поэтому итоговой моделью оставлена исходная конфигурация XGBoost.
+Hyperparameter tuning did not improve the business-oriented result. The tuned XGBoost model achieved the same Recall on the validation set but produced more False Positives. Therefore, the original XGBoost configuration was retained as the final model.
 
-## PostgreSQL и SQL-анализ
+## PostgreSQL and SQL Analysis
 
-Результаты модели выгружаются в PostgreSQL. Для test-выборки сохраняются исходные признаки, фактический класс, fraud score и итоговое предсказание.
+Model results are exported to PostgreSQL.
 
-Пример таблицы:
+For the test dataset, the following information is stored:
+
+- original transaction features;
+- actual class;
+- fraud score;
+- final prediction.
+
+Example table:
 
 ```text
 fraud_scored_transactions
 ```
 
-Примеры SQL-запросов:
+Example SQL queries:
 
 ```sql
--- Общая доля мошеннических операций
+-- Overall fraud rate
 SELECT
     COUNT(*) AS total_transactions,
     SUM(actual_class) AS fraud_transactions,
@@ -82,7 +95,7 @@ FROM fraud_scored_transactions;
 ```
 
 ```sql
--- Количество операций по предсказанному классу
+-- Number of transactions by predicted class
 SELECT
     predicted_fraud,
     COUNT(*) AS transactions,
@@ -93,7 +106,7 @@ ORDER BY predicted_fraud;
 ```
 
 ```sql
--- Операции с наибольшим fraud score
+-- Transactions with the highest fraud scores
 SELECT
     "Amount",
     actual_class,
@@ -104,24 +117,24 @@ ORDER BY fraud_probability DESC
 LIMIT 20;
 ```
 
-SQL используется не для обучения модели, а для анализа результатов и проверки поведения модели на сохраненных данных.
+SQL is not used for model training. It is used for analysing saved predictions and validating model behaviour on persisted data.
 
 ## FastAPI
 
-Обученная модель сохранена как `fraud_model.joblib` и загружается приложением FastAPI.
+The trained model is saved as `fraud_model.joblib` and loaded by the FastAPI application.
 
-Основные endpoints:
+Main endpoints:
 
 ```text
 GET  /health
 POST /predict
 ```
 
-`/health` проверяет, что сервис работает.
+`/health` checks whether the service is running.
 
-`/predict` принимает признаки одной транзакции, выполняет тот же feature engineering, который использовался при обучении, рассчитывает fraud score и сравнивает его с сохраненным threshold.
+`/predict` accepts the features of a single transaction, applies the same feature engineering used during training, calculates the fraud score, and compares it with the stored threshold.
 
-Пример ответа:
+Example response:
 
 ```json
 {
@@ -133,9 +146,9 @@ POST /predict
 }
 ```
 
-Предсказания API могут сохраняться в PostgreSQL для последующего анализа и мониторинга.
+API predictions can also be stored in PostgreSQL for further analysis and monitoring.
 
-Swagger-документация FastAPI доступна локально по адресу:
+FastAPI Swagger documentation is available locally at:
 
 ```text
 http://127.0.0.1:8000/docs
@@ -143,51 +156,58 @@ http://127.0.0.1:8000/docs
 
 ## MLflow
 
-MLflow используется для отслеживания экспериментов.
+MLflow is used for experiment tracking.
 
-Для итогового run `xgboost_champion` сохраняются:
+For the final run, `xgboost_champion`, the following artifacts and metrics are stored:
 
-- модель;
+- model;
 - threshold;
 - Precision / Recall / F1;
 - Average Precision / PR-AUC;
-- False Positive / False Negative;
-- условная business cost.
+- False Positives / False Negatives;
+- hypothetical business cost.
 
-Локальное хранилище метаданных MLflow использует SQLite (`mlflow.db`).
+The local MLflow metadata store uses SQLite (`mlflow.db`).
 
 ## Docker
 
-FastAPI и PostgreSQL можно запускать как отдельные контейнеры через Docker Compose:
+FastAPI and PostgreSQL can be started as separate containers using Docker Compose:
 
 ```powershell
 docker compose up --build
 ```
 
-Это упрощает повторяемый локальный запуск приложения и базы данных.
+This provides a repeatable local environment for running both the application and database.
 
-## Drift monitoring
+## Drift Monitoring
 
-Для базового мониторинга сравнивается распределение production-признаков с reference sample из обучающих данных.
+For basic monitoring, the distribution of production features is compared with a reference sample taken from the training data.
 
-Используется PSI (Population Stability Index). Это простой индикатор изменения распределения данных, а не полноценная production-система мониторинга.
+PSI (Population Stability Index) is used as a simple indicator of distribution shift.
 
-## Основные технологии
+This is a lightweight drift indicator and should not be considered a complete production monitoring system.
+
+## Main Technologies
 
 - Python
-- pandas, NumPy, matplotlib
+- pandas
+- NumPy
+- matplotlib
 - scikit-learn
-- XGBoost, LightGBM, CatBoost
+- XGBoost
+- LightGBM
+- CatBoost
 - SHAP
 - MLflow
 - FastAPI
 - PostgreSQL
-- SQLAlchemy, psycopg
+- SQLAlchemy
+- psycopg
 - joblib
 - Docker / Docker Compose
 - Jupyter Notebook
 
-## Основные файлы
+## Main Files
 
 ```text
 notebooks/
@@ -209,12 +229,15 @@ artifacts/
 └── reference_sample.csv
 ```
 
-## Ограничения
+## Limitations
 
-- Данные покрывают короткий временной период.
-- `V1–V28` анонимизированы, поэтому их бизнес-смысл неизвестен.
-- Fraud-класс крайне редкий.
-- Стоимости False Positive и False Negative заданы условно.
-- Проект не является готовой банковской anti-fraud системой: нет реальных online labels, автоматического retraining, полноценного мониторинга, authentication/authorization и production deployment.
-
-
+- The dataset covers only a short time period.
+- Features `V1–V28` are anonymised, so their business meaning is unknown.
+- The fraud class is extremely rare.
+- False Positive and False Negative costs are hypothetical.
+- The project is not a production-ready banking anti-fraud system. It does not include:
+  - real online labels;
+  - automated retraining;
+  - full production monitoring;
+  - authentication / authorization;
+  - production deployment.
